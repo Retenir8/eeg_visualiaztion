@@ -1,0 +1,65 @@
+# 脑机接口系统配置文件
+
+# OpenBCI设备设置
+openbci:
+  port: "/dev/ttyUSB0"  # OpenBCI设备端口
+  baud_rate: 115200     # 波特率
+  sample_rate: 250      # 采样率 Hz
+  num_channels: 8       # 通道数
+  
+# 信号处理设置
+signal_processing:
+  # 带通滤波器设置
+  bandpass_filter:
+    low_cutoff: 1.0     # 低频截止 Hz
+    high_cutoff: 50.0   # 高频截止 Hz
+    order: 4            # 滤波器阶数
+  
+  # 陷波滤波器设置（去除50Hz工频干扰）
+  notch_filter:
+    frequency: 50.0     # 陷波频率 Hz
+    quality_factor: 30  # Q值
+  
+  # 特征提取设置
+  feature_extraction:
+    window_size: 256    # 特征提取窗口大小
+    overlap: 128        # 窗口重叠大小
+    # 频带定义
+    frequency_bands:
+      delta: [1, 4]     # Delta波 1-4 Hz
+      theta: [4, 8]     # Theta波 4-8 Hz
+      alpha: [8, 13]    # Alpha波 8-13 Hz
+      beta: [13, 30]    # Beta波 13-30 Hz
+      gamma: [30, 50]   # Gamma波 30-50 Hz
+
+# 通信设置
+communication:
+  udp:
+    server_ip: "127.0.0.1"    # 服务端IP地址
+    server_port: 9999         # 服务端端口
+    client_ip: "127.0.0.1"    # Unity客户端IP地址
+    client_port: 8888         # Unity客户端端口
+    buffer_size: 1024         # 缓冲区大小
+    
+  # 数据传输设置
+  data_rate: 30               # 数据发送频率 Hz
+  max_channels: 8             # 最大通道数
+  
+# 数据缓存设置
+buffer:
+  max_size: 1000              # 最大缓存大小
+  save_data: false            # 是否保存数据到文件
+  save_path: "./data/raw_data.csv"
+
+# 可视化设置
+visualization:
+  show_spectrogram: true      # 显示频谱图
+  show_waveforms: true        # 显示波形
+  window_duration: 5.0        # 窗口显示时长(秒)
+  
+# 日志设置
+logging:
+  level: "INFO"               # 日志级别: DEBUG, INFO, WARNING, ERROR
+  file_path: "./logs/system.log"
+  max_file_size: 10485760     # 最大文件大小 10MB
+  backup_count: 3             # 备份文件数量
