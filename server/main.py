@@ -216,6 +216,7 @@ class BrainComputerSystem:
         """启动处理线程"""
         try:
             # 启动数据处理线程
+            print("启动处理线程")
             self.processing_thread = threading.Thread(target=self._data_processing_loop, daemon=True)
             self.processing_thread.start()
             
@@ -230,12 +231,14 @@ class BrainComputerSystem:
     
     def _data_processing_loop(self):
         """数据处理主循环"""
+        print("进入主循环")
         system_logger.info("_data_processing_loop started - sending 8-channel EEG data to Unity")
         
         loop_counter = 0
         last_log_time = time.time()
         
         while self.is_running:
+            print("循环中")
             try:
                 loop_counter += 1
                 current_time = time.time()
@@ -274,7 +277,7 @@ class BrainComputerSystem:
                             self.data_buffer.add_sample(filtered_sample.tolist(), timestamp, features)
                     
                     # 在处理完所有样本后，检查是否应该发送
-                    if self.data_buffer and getattr(self.data_buffer, "should_send_data", lambda: False)():
+                    if self.data_buffer and self.data_buffer.should_send_data():
                         eeg_data, features_data = self.data_buffer.get_data_for_transmission()
                         
                         if eeg_data is not None:
@@ -290,6 +293,7 @@ class BrainComputerSystem:
                                                     f"type={type(eeg_data)}, "
                                                     f"first_sample={eeg_data[0].tolist()}")
                                 sent = self.udp_server.send_eeg_data(eeg_data.tolist(), features_data, metadata) # pyright: ignore[reportOptionalMemberAccess, reportArgumentType]
+                                system_logger.info(f"尝试发送数据包... 结果: {sent}")
                                 if sent:
                                     # 更新缓冲区的发送时间
                                     self.data_buffer.last_send_time = time.time()
@@ -408,11 +412,13 @@ class BrainComputerSystem:
                 system_logger.error("start_communication() failed")
                 return False
             
+            print("设置系统运行状态为True")
+            self.is_running = True
+            
             # 启动处理线程
             self.start_processing_threads()
             system_logger.debug("Processing threads requested to start")
             
-            self.is_running = True
             
             system_logger.info("Brain Computer System started successfully!")
             
@@ -420,6 +426,7 @@ class BrainComputerSystem:
             if self.udp_server:
                 self.udp_server.send_status("system_started", "Server is ready")
                 # 发送一次小的测试EEG包，帮助客户端验证接收和解析（调试用）
+                '''
                 try:
                     num_channels = self.config.get('openbci', {}).get('num_channels', 8)
                     test_samples = 5
@@ -428,7 +435,7 @@ class BrainComputerSystem:
                     self.udp_server.send_eeg_data(test_eeg, None, {'note': 'initial_test_packet'})
                 except Exception as e:
                     system_logger.error(f"Failed to send initial test EEG packet: {e}")
-            
+                '''
             return True
             
         except Exception as e:
@@ -475,6 +482,8 @@ class BrainComputerSystem:
             
             # 主循环
             while self.is_running:
+                print(self.is_running)
+                print("主循环中1")
                 try:
                     time.sleep(1.0)
                     
@@ -482,7 +491,7 @@ class BrainComputerSystem:
                     if self.openbci_interface and not self.openbci_interface.is_connected:
                         system_logger.warning("Hardware connection lost, attempting to reconnect...")
                         self.connect_hardware()
-                    
+                    print("主循环中2")
                 except KeyboardInterrupt:
                     system_logger.info("Received keyboard interrupt")
                     break

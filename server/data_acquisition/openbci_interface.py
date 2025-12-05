@@ -267,8 +267,8 @@ class OpenBCIInterface:
                 self.data_buffer.push_sample(channels_data) # pyright: ignore[reportOptionalMemberAccess]
                 
                 # 记录采集信息（调试）
-                if len(channels_data) > 0:
-                    system_logger.debug(f"Acquired sample: {channels_data[0]:.2f} (ch1)")
+                # if len(channels_data) > 0:
+                #     system_logger.debug(f"Acquired sample: {channels_data[0]:.2f} (ch1)")
             except Exception as e:
                 system_logger.error(f"Error in data callback: {e}")
         

@@ -474,3 +474,25 @@ class RealTimeDataBuffer:
             'time_since_last_send': current_time - self.last_send_time,
             'buffer_utilization': len(self.data_buffer) / self.buffer_size
         }
+    
+    def should_send_data(self) -> bool:
+        """
+        判断是否满足发送数据的条件
+        """
+        import time
+        current_time = time.time()
+        
+        # 条件1: 缓冲区为空则不发送
+        if not self.data_buffer:
+            return False
+            
+        # 条件2: 距离上次发送已经超过了设定的时间间隔 (比如 1/30秒)
+        # 注意：self.last_send_time 初始化为负无穷，所以第一次必然满足
+        if (current_time - self.last_send_time) >= self.sample_interval:
+            return True
+            
+        # 条件3: 缓冲区积压过多（保护机制），强制发送
+        if len(self.data_buffer) >= self.buffer_size:
+            return True
+            
+        return False

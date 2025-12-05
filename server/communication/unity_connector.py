@@ -84,43 +84,43 @@ class UDPDataSender:
     
     def send_data(self, data: Dict[str, Any]) -> bool:
         """
-        发送数据
-        
-        Args:
-            data: 要发送的数据字典
-            
-        Returns:
-            bool: 发送是否成功
+        发送数据（增强版：防自杀）
         """
-        if not self.is_connected or not self.socket:
-            system_logger.warning("Not connected to UDP target")
-            return False
+        # 尝试自动重连（如果socket丢失）
+        if not self.socket:
+            system_logger.warning("Socket not initialized, attempting to reconnect...")
+            if not self.connect():
+                return False
         
         try:
-            # 添加时间戳
+            # 1. 准备数据
             data['timestamp'] = time.time()
             data['server_timestamp'] = data.get('timestamp', time.time())
             
-            # 序列化为JSON
             json_data = json.dumps(data)
-            
-            # 转换为字节
             data_bytes = json_data.encode('utf-8')
             
-            # 检查数据包大小（UDP通常限制为65507字节）
+            # 2. 检查包大小
             if len(data_bytes) > 65000:
                 system_logger.warning(f"Data packet too large ({len(data_bytes)} bytes), splitting...")
                 return self._send_large_data(data)
             
-            # 发送数据
-            sent_bytes = self.socket.sendto(data_bytes, (self.target_ip, self.target_port))
-            
-            system_logger.debug(f"Sent {sent_bytes} bytes to {self.target_ip}:{self.target_port}")
+            # 3. 发送数据
+            self.socket.sendto(data_bytes, (self.target_ip, self.target_port)) # type: ignore
             return True
             
+        except ConnectionResetError:
+            # [关键修复] Windows特有错误 (10054)
+            # 当客户端(Unity)没启动或重启时，OS会报这个错。
+            # 这不代表socket坏了，只代表"刚才那个包没送达"。
+            # 我们绝对不能因此把 is_connected 设为 False！
+            # system_logger.debug("Client not ready (ConnectionReset), keeping connection alive.")
+            return False
+            
         except Exception as e:
+            # 对于其他错误，记录日志，但尽量不要杀死连接，除非是致命错误
             system_logger.error(f"Failed to send data: {e}")
-            self.is_connected = False
+            # self.is_connected = False  <-- [务必删除或注释掉这一行]
             return False
     
     def _send_large_data(self, data: Dict[str, Any]) -> bool:
