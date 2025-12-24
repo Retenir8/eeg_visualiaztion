@@ -1,489 +1,184 @@
-/* Unity客户端3D大脑映射组件
-将EEG信号映射到3D大脑模型上 */
-
 using UnityEngine;
-using UnityEngine.UI;
-using TMPro;
 using System.Collections.Generic;
 
 /// <summary>
-/// 大脑映射器
-/// 将EEG数据映射到3D大脑模型上显示
+/// 3D大脑映射器 - 负责将8通道幅值传递给Shader进行空间插值渲染
+/// 支持多个Mesh部位组成的复杂模型
 /// </summary>
 public class BrainMapper : MonoBehaviour
 {
-    [Header("3D模型设置")]
-    [SerializeField] private GameObject brainModel; // 3D大脑模型
-    [SerializeField] private Transform[] electrodePositions; // 电极位置
-    
-    [Header("显示设置")]
-    [SerializeField] private int maxChannels = 8;
-    [SerializeField] private float animationSpeed = 2f;
-    [SerializeField] private float intensityScale = 1f;
-    
-    [Header("颜色映射")]
-    [SerializeField] private Gradient colorGradient;
-    [SerializeField] private float minColorValue = -100f;
-    [SerializeField] private float maxColorValue = 100f;
-    
-    [Header("UI引用")]
-    [SerializeField] private TextMeshProUGUI channelInfoText;
-    [SerializeField] private Dropdown channelSelectionDropdown;
-    [SerializeField] private Slider intensitySlider;
-    [SerializeField] private Toggle autoUpdateToggle;
-    
-    // 通道数据
-    private float[] channelData = new float[8];
-    private float[] channelIntensity = new float[8];
-    private bool[] channelActive = new bool[8];
-    
-    // 渲染组件
-    private Renderer[] electrodeRenderers;
-    private Material[] electrodeMaterials;
-    
-    // 数据接收器
-    private UDPDataReceiver dataReceiver;
-    
-    // 动画控制
-    private bool isAnimating = false;
-    private float lastUpdateTime = 0f;
-    
+    [Header("渲染引用")]
+    [SerializeField] private Renderer[] brainRenderers; // 修改为数组：支持拖入多个大脑部位
+    [SerializeField] private Transform[] electrodePositions; // 场景中的Electrode_0-7
+
+    [Header("映射设置")]
+    [Range(0.1f, 10f)]
+    [SerializeField] private float intensityScale = 1.0f; // 幅值缩放
+    [SerializeField] private float animationSpeed = 5.0f; // 颜色过渡平滑度
+    [SerializeField] private float minInputMicrovolts = -50f; // 归一化最小值
+    [SerializeField] private float maxInputMicrovolts = 50f;  // 归一化最大值
+
+    // 内部数据存储
+    private float[] currentIntensities = new float[8]; 
+    private float[] targetIntensities = new float[8];  
+    private Vector4[] shaderPoints = new Vector4[8];   
+    private List<Material> brainMaterials = new List<Material>(); // 存储所有子部位的材质
+    private bool hasWarnedNoMaterials = false;
+    private bool hasSetGlobalOnce = false;
+    private string globalHeatName = "_GlobalHeat";
+
     void Start()
     {
-        InitializeBrainMapping();
-        SetupUI();
-    }
-    
-    void Update()
-    {
-        UpdateBrainMapping();
-    }
-    
-    /// <summary>
-    /// 初始化大脑映射
-    /// </summary>
-    private void InitializeBrainMapping()
-    {
-        // 查找数据接收器
-        dataReceiver = FindObjectOfType<UDPDataReceiver>();
-        if (dataReceiver != null)
+        // 方案一：初始化时获取所有部位的实例材质
+        if (brainRenderers != null && brainRenderers.Length > 0)
         {
-            dataReceiver.OnDataReceived += OnDataReceived;
-        }
-        
-        // 设置电极位置
-        SetupElectrodePositions();
-        
-        // 创建电极材质
-        SetupElectrodeMaterials();
-        
-        // 初始化通道状态
-        for (int i = 0; i < maxChannels; i++)
-        {
-            channelActive[i] = true;
-            channelIntensity[i] = 0f;
-        }
-        
-        Debug.Log("大脑映射器初始化完成");
-    }
-    
-    /// <summary>
-    /// 设置电极位置
-    /// </summary>
-    private void SetupElectrodePositions()
-    {
-        if (electrodePositions == null || electrodePositions.Length == 0)
-        {
-            // 如果没有指定位置，创建默认位置
-            electrodePositions = CreateDefaultElectrodePositions();
-        }
-        
-        // 确保电极数量正确
-        if (electrodePositions.Length < maxChannels)
-        {
-            Debug.LogWarning($"电极位置数量 ({electrodePositions.Length}) 少于所需通道数 ({maxChannels})");
-        }
-    }
-    
-    /// <summary>
-    /// 创建默认电极位置
-    /// </summary>
-    private Transform[] CreateDefaultElectrodePositions()
-    {
-        List<Transform> positions = new List<Transform>();
-        
-        // 在大脑模型周围创建8个默认位置
-        for (int i = 0; i < maxChannels; i++)
-        {
-            GameObject electrode = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            electrode.name = $"DefaultElectrode_{i}";
-            electrode.transform.localScale = Vector3.one * 0.05f; // 小球体
-            
-            // 设置位置（简单的圆形分布）
-            float angle = (i / (float)maxChannels) * Mathf.PI * 2;
-            float radius = 0.3f;
-            
-            electrode.transform.position = new Vector3(
-                Mathf.Cos(angle) * radius,
-                0.2f,
-                Mathf.Sin(angle) * radius
-            );
-            
-            // 添加发光效果
-            Material electrodeMaterial = new Material(Shader.Find("Standard"));
-            electrodeMaterial.SetColor("_EmissionColor", Color.black);
-            electrodeMaterial.EnableKeyword("_EMISSION");
-            electrode.GetComponent<Renderer>().material = electrodeMaterial;
-            
-            positions.Add(electrode.transform);
-        }
-        
-        return positions.ToArray();
-    }
-    
-    /// <summary>
-    /// 设置电极材质
-    /// </summary>
-    private void SetupElectrodeMaterials()
-    {
-        if (electrodePositions == null) return;
-        
-        electrodeRenderers = new Renderer[maxChannels];
-        electrodeMaterials = new Material[maxChannels];
-        
-        for (int i = 0; i < maxChannels; i++)
-        {
-            if (i < electrodePositions.Length)
+            foreach (Renderer rend in brainRenderers)
             {
-                Renderer renderer = electrodePositions[i].GetComponent<Renderer>();
-                if (renderer != null)
+                if (rend != null)
                 {
-                    electrodeRenderers[i] = renderer;
-                    electrodeMaterials[i] = renderer.material;
-                    
-                    // 设置初始颜色
-                    SetElectrodeColor(i, Color.black);
+                    // 使用 .material 会自动创建实例，修改不会影响项目资源文件
+                    brainMaterials.Add(rend.material);
                 }
             }
         }
-    }
-    
-    /// <summary>
-    /// 设置UI组件
-    /// </summary>
-    private void SetupUI()
-    {
-        // 设置通道选择下拉菜单
-        if (channelSelectionDropdown != null)
+
+        // 输出每个材质的 shader 信息以及是否支持需要的属性
+        foreach (var mat in brainMaterials)
         {
-            channelSelectionDropdown.ClearOptions();
-            List<string> channelOptions = new List<string>();
-            for (int i = 0; i < maxChannels; i++)
+            if (mat == null) continue;
+            string shaderName = mat.shader != null ? mat.shader.name : "<null>";
+            bool hasElectro = mat.HasProperty("_ElectrodePoints");
+            bool hasInts = mat.HasProperty("_Intensities");
+            bool hasScale = mat.HasProperty("_IntensityScale");
+            Debug.Log($"BrainMapper: material='{mat.name}', shader='{shaderName}', has _ElectrodePoints={hasElectro}, has _Intensities={hasInts}, has _IntensityScale={hasScale}");
+        }
+
+        // 输出材质数量与电极数组长度（带异常保护）
+        int electrodeLen = 0;
+        bool electrodeValid = true;
+        try
+        {
+            electrodeLen = electrodePositions != null ? electrodePositions.Length : 0;
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"BrainMapper: 读取 electrodePositions.Length 时发生异常: {ex.Message}");
+            electrodeValid = false;
+            electrodeLen = 0;
+        }
+
+        Debug.Log($"BrainMapper: 找到材质数量={brainMaterials.Count}, 电极引用长度={electrodeLen}");
+
+        if (!electrodeValid || electrodePositions == null || electrodeLen < 8)
+        {
+            Debug.LogWarning("BrainMapper: electrodePositions 配置异常或长度小于8，某些电极坐标将为 (0,0,0)");
+        }
+
+        // 尝试修复材质上丢失的 shader（如果发现不是目标 shader）
+        Shader target = Shader.Find("Custom/BrainHeatmap");
+        foreach (var mat in brainMaterials)
+        {
+            if (mat == null) continue;
+            if (mat.shader == null || mat.shader.name == "Hidden/InternalErrorShader")
             {
-                channelOptions.Add($"通道 {i + 1}");
-            }
-            channelSelectionDropdown.AddOptions(channelOptions);
-            channelSelectionDropdown.onValueChanged.AddListener(OnChannelSelectionChanged);
-        }
-        
-        // 设置强度滑块
-        if (intensitySlider != null)
-        {
-            intensitySlider.minValue = 0.1f;
-            intensitySlider.maxValue = 5f;
-            intensitySlider.value = intensityScale;
-            intensitySlider.onValueChanged.AddListener(OnIntensityChanged);
-        }
-        
-        // 设置自动更新
-        if (autoUpdateToggle != null)
-        {
-            autoUpdateToggle.isOn = true;
-        }
-    }
-    
-    /// <summary>
-    /// 数据接收回调
-    /// </summary>
-    private void OnDataReceived(float[] data)
-    {
-        if (isPaused || data == null || data.Length == 0) return;
-        
-        // 数据格式：[s0_ch0, s0_ch1, ..., s0_ch7, s1_ch0, s1_ch1, ..., s_n_ch7]
-        // 计算样本数
-        int sampleCount = data.Length / maxChannels;
-        
-        // 使用最后一个样本的数据（最新数据）
-        int lastSampleStartIndex = (sampleCount - 1) * maxChannels;
-        
-        // 更新通道数据
-        for (int i = 0; i < maxChannels && i < data.Length; i++)
-        {
-            int dataIndex = lastSampleStartIndex + i;
-            if (dataIndex < data.Length)
-            {
-                channelData[i] = data[dataIndex];
-                
-                // 计算强度值
-                float normalizedValue = Mathf.InverseLerp(minColorValue, maxColorValue, channelData[i]);
-                channelIntensity[i] = normalizedValue * intensityScale;
-            }
-        }
-        
-        isAnimating = true;
-    }
-    
-    /// <summary>
-    /// 更新大脑映射
-    /// </summary>
-    private void UpdateBrainMapping()
-    {
-        if (!isAnimating) return;
-        
-        float deltaTime = Time.deltaTime;
-        
-        for (int i = 0; i < maxChannels; i++)
-        {
-            if (i < electrodeMaterials.Length && electrodeMaterials[i] != null)
-            {
-                // 计算目标颜色
-                float targetIntensity = channelActive[i] ? channelIntensity[i] : 0f;
-                
-                // 平滑过渡
-                float currentIntensity = GetCurrentIntensity(i);
-                float newIntensity = Mathf.Lerp(currentIntensity, targetIntensity, deltaTime * animationSpeed);
-                
-                // 更新材质
-                SetElectrodeIntensity(i, newIntensity);
-            }
-        }
-        
-        // 检查动画是否完成
-        if (IsAnimationComplete())
-        {
-            isAnimating = false;
-        }
-        
-        // 更新UI信息
-        UpdateChannelInfo();
-    }
-    
-    /// <summary>
-    /// 设置电极强度
-    /// </summary>
-    private void SetElectrodeIntensity(int channel, float intensity)
-    {
-        if (channel >= electrodeMaterials.Length || electrodeMaterials[channel] == null) return;
-        
-        // 获取颜色
-        Color targetColor = colorGradient != null 
-            ? colorGradient.Evaluate(intensity)
-            : Color.Lerp(Color.blue, Color.red, intensity);
-        
-        // 设置材质颜色和发光
-        SetElectrodeColor(channel, targetColor);
-        
-        // 设置发光强度
-        if (electrodeMaterials[channel].HasProperty("_EmissionColor"))
-        {
-            Color emissionColor = targetColor * intensity * 0.5f;
-            electrodeMaterials[channel].SetColor("_EmissionColor", emissionColor);
-            electrodeMaterials[channel].EnableKeyword("_EMISSION");
-        }
-    }
-    
-    /// <summary>
-    /// 设置电极颜色
-    /// </summary>
-    private void SetElectrodeColor(int channel, Color color)
-    {
-        if (channel >= electrodeMaterials.Length || electrodeMaterials[channel] == null) return;
-        
-        electrodeMaterials[channel].SetColor("_Color", color);
-        
-        // 确保材质支持发光
-        if (color.r > 0.1f || color.g > 0.1f || color.b > 0.1f)
-        {
-            electrodeMaterials[channel].EnableKeyword("_EMISSION");
-        }
-        else
-        {
-            electrodeMaterials[channel].DisableKeyword("_EMISSION");
-        }
-    }
-    
-    /// <summary>
-    /// 获取当前强度
-    /// </summary>
-    private float GetCurrentIntensity(int channel)
-    {
-        if (channel >= electrodeMaterials.Length || electrodeMaterials[channel] == null) return 0f;
-        
-        Color color = electrodeMaterials[channel].GetColor("_Color");
-        return (color.r + color.g + color.b) / 3f;
-    }
-    
-    /// <summary>
-    /// 检查动画是否完成
-    /// </summary>
-    private bool IsAnimationComplete()
-    {
-        for (int i = 0; i < maxChannels; i++)
-        {
-            if (i < electrodeMaterials.Length && electrodeMaterials[i] != null)
-            {
-                float currentIntensity = GetCurrentIntensity(i);
-                float targetIntensity = channelActive[i] ? channelIntensity[i] : 0f;
-                
-                if (Mathf.Abs(currentIntensity - targetIntensity) > 0.01f)
+                if (target != null)
                 {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-    
-    /// <summary>
-    /// 更新通道信息显示
-    /// </summary>
-    private void UpdateChannelInfo()
-    {
-        if (channelInfoText == null) return;
-        
-        string info = "大脑映射 - 通道状态:\n";
-        for (int i = 0; i < maxChannels; i++)
-        {
-            string status = channelActive[i] ? "激活" : "关闭";
-            float intensity = GetCurrentIntensity(i);
-            info += $"Ch{i + 1}: {status} ({intensity:F2})\n";
-        }
-        
-        channelInfoText.text = info;
-    }
-    
-    /// <summary>
-    /// 通道选择变化处理
-    /// </summary>
-    public void OnChannelSelectionChanged(int channel)
-    {
-        // 突出显示选择的通道
-        HighlightSelectedChannel(channel);
-    }
-    
-    /// <summary>
-    /// 强度变化处理
-    /// </summary>
-    public void OnIntensityChanged(float newIntensity)
-    {
-        intensityScale = newIntensity;
-    }
-    
-    /// <summary>
-    /// 突出显示选择的通道
-    /// </summary>
-    private void HighlightSelectedChannel(int channel)
-    {
-        for (int i = 0; i < maxChannels; i++)
-        {
-            if (i < electrodeMaterials.Length && electrodeMaterials[i] != null)
-            {
-                // 为选择的通道设置不同的颜色
-                if (i == channel)
-                {
-                    SetElectrodeIntensity(i, channelIntensity[i] * 2f); // 增强亮度
+                    mat.shader = target;
+                    Debug.Log($"BrainMapper: 已将材质 '{mat.name}' 的 shader 设为 'Custom/BrainHeatmap'");
                 }
                 else
                 {
-                    SetElectrodeIntensity(i, channelIntensity[i] * 0.5f); // 降低亮度
+                    Debug.LogWarning("BrainMapper: 未能找到 'Custom/BrainHeatmap' shader，请检查 Shader 文件是否存在并已编译。");
                 }
             }
         }
-    }
-    
-    /// <summary>
-    /// 切换通道状态
-    /// </summary>
-    public void ToggleChannel(int channel)
-    {
-        if (channel >= 0 && channel < maxChannels)
+
+        // 列出电极数组逐项状态，便于排查负长度/空引用问题
+        if (electrodePositions != null && electrodeLen > 0)
         {
-            channelActive[channel] = !channelActive[channel];
+            int dumpCount = Mathf.Min(electrodeLen, 16);
+            for (int i = 0; i < dumpCount; i++)
+            {
+                Transform t = electrodePositions[i];
+                Debug.Log($"BrainMapper: electrodePositions[{i}] = {(t!=null? t.name : "<null>")}\n");
+            }
+        }
+
+        UpdateElectrodeCoordinates();
+    }
+
+    void Update()
+    {
+        // 1. 平滑强度数据
+        for (int i = 0; i < 8; i++)
+            currentIntensities[i] = Mathf.Lerp(currentIntensities[i], targetIntensities[i], Time.deltaTime * animationSpeed);
+
+        // 2. 为每个 Renderer 独立计算
+        for (int i = 0; i < brainRenderers.Length; i++)
+        {
+            Renderer rend = brainRenderers[i];
+            if (rend == null || i >= brainMaterials.Count) continue;
+
+            Material mat = brainMaterials[i];
+            if (mat == null) continue;
+
+            Vector4[] localPoints = new Vector4[8];
+            for (int j = 0; j < 8; j++)
+            {
+                // 核心修复：直接将电极的世界坐标传给材质，
+                // 然后我们在 Shader 里把顶点的坐标也转成世界空间
+                // 这样无论模型怎么缩放位移，坐标绝对一致！
+                localPoints[j] = electrodePositions[j].position; 
+            }
+
+            mat.SetVectorArray("_ElectrodePoints", localPoints);
+            mat.SetFloatArray("_Intensities", currentIntensities);
+            mat.SetFloat("_IntensityScale", intensityScale);
         }
     }
-    
+
     /// <summary>
-    /// 清除显示
+    /// 被 VisualizationManager 调用，接收来自 UDP 的实时数据
     /// </summary>
+    public void UpdateData(float[] data)
+    {
+        if (data == null || data.Length < 8) return;
+
+        // 获取最新的样本
+        int lastSampleIndex = data.Length - 8;
+
+        for (int i = 0; i < 8; i++)
+        {
+            float rawValue = data[lastSampleIndex + i];
+            targetIntensities[i] = Mathf.InverseLerp(minInputMicrovolts, maxInputMicrovolts, rawValue);
+            if (i == 0)
+            {
+                Debug.Log($"BrainMapper.UpdateData: rawValues[{i}]={rawValue:F3}, target={targetIntensities[i]:F3}");
+            }
+        }
+    }
+
+    private void UpdateElectrodeCoordinates()
+{
+    if (brainRenderers == null || brainRenderers.Length == 0) return;
+
+    for (int i = 0; i < 8; i++)
+    {
+        if (i < electrodePositions.Length && electrodePositions[i] != null)
+        {
+            // 【关键修改】：将电极的世界坐标转换为大脑模型的本地空间坐标
+            // 这样 Shader 里的 localPos 才能和这个坐标对上
+            Vector3 localP = brainRenderers[0].transform.InverseTransformPoint(electrodePositions[i].position);
+            shaderPoints[i] = new Vector4(localP.x, localP.y, localP.z, 1f);
+        }
+    }
+}
     public void ClearDisplay()
     {
-        // 清除所有通道数据
-        for (int i = 0; i < maxChannels; i++)
+        for (int i = 0; i < 8; i++)
         {
-            channelData[i] = 0f;
-            channelIntensity[i] = 0f;
-            SetElectrodeIntensity(i, 0f);
-        }
-        
-        isAnimating = false;
-    }
-    
-    /// <summary>
-    /// 设置暂停状态
-    /// </summary>
-    public void SetPaused(bool paused)
-    {
-        isPaused = paused;
-    }
-    
-    /// <summary>
-    /// 重新定位电极
-    /// </summary>
-    public void RelocateElectrodes()
-    {
-        DestroyElectrodeObjects();
-        electrodePositions = CreateDefaultElectrodePositions();
-        SetupElectrodeMaterials();
-    }
-    
-    /// <summary>
-    /// 销毁电极对象
-    /// </summary>
-    private void DestroyElectrodeObjects()
-    {
-        if (electrodePositions != null)
-        {
-            foreach (Transform electrode in electrodePositions)
-            {
-                if (electrode != null)
-                {
-                    Destroy(electrode.gameObject);
-                }
-            }
-        }
-    }
-    
-    // 暂停控制
-    private bool isPaused = false;
-    
-    void OnDestroy()
-    {
-        // 取消事件订阅
-        if (dataReceiver != null)
-        {
-            dataReceiver.OnDataReceived -= OnDataReceived;
-        }
-        
-        // 清理材质
-        if (electrodeMaterials != null)
-        {
-            foreach (Material material in electrodeMaterials)
-            {
-                if (material != null)
-                {
-                    Destroy(material);
-                }
-            }
+            targetIntensities[i] = 0;
+            currentIntensities[i] = 0;
         }
     }
 }

@@ -25,7 +25,7 @@ public class Spectrogram : MonoBehaviour
     
     [Header("UI引用")]
     [SerializeField] private RawImage spectrumImage;
-    [SerializeField] private TextMeshProUGUI channelInfoText;
+    [SerializeField] private Text channelInfoText;
     [SerializeField] private Dropdown channelDropdown;
     [SerializeField] private Slider frequencyRangeSlider;
     

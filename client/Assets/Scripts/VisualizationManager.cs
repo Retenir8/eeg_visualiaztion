@@ -21,9 +21,9 @@ public class VisualizationManager : MonoBehaviour
     
     [Header("UI引用")]
     [SerializeField] private Canvas mainCanvas;
-    [SerializeField] private TextMeshProUGUI connectionStatusText;
-    [SerializeField] private TextMeshProUGUI dataInfoText;
-    [SerializeField] private TextMeshProUGUI systemInfoText;
+    [SerializeField] private Text connectionStatusText;
+    [SerializeField] private Text dataInfoText;
+    [SerializeField] private Text systemInfoText;
     [SerializeField] private Button clearDataButton;
     [SerializeField] private Button pauseButton;
     [SerializeField] private Slider amplitudeSlider;
@@ -366,7 +366,7 @@ public class VisualizationManager : MonoBehaviour
     {
         if (pauseButton != null)
         {
-            pauseButton.GetComponentInChildren<TextMeshProUGUI>().text = isPaused ? "恢复" : "暂停";
+            pauseButton.GetComponentInChildren<Text>().text = isPaused ? "恢复" : "暂停";
         }
         
         // 更新其他按钮状态
@@ -428,46 +428,37 @@ public class VisualizationManager : MonoBehaviour
         public float Fps;
     }
 
-    /// <summary>
-    /// 处理接收到的EEG数据包
-    /// </summary>
-    /// <param name="data">包含所有通道数据的一维数组</param>
-    private void OnEEGDataReceived(float[] data)
+/// <summary>
+/// 处理接收到的EEG数据包
+/// </summary>
+/// <param name="data">包含所有通道数据的一维数组</param>
+private void OnEEGDataReceived(float[] data)
+{
+    // 1. 更新统计数据
+    if (data != null && data.Length > 0)
     {
-        // 1. 更新统计数据
-        if (data != null && data.Length > 0)
+        totalDataCount += data.Length; 
+        lastDataTime = 0f; 
+        
+        if (dataReceiver != null && currentChannelCount == 0)
         {
-            // 假设这里接收的是单帧或多帧的扁平化数据
-            // 如果要精确计算样本数（Timepoints），需要知道通道数。
-            // 暂时简单处理：每次回调视为收到一批数据，更新最后时间
-            
-            // 这里的 totalDataCount 简单累加接收到的数据点总数，或者您可以定义为样本包数量
-            totalDataCount += data.Length; 
-            lastDataTime = 0f; // 重置"最后更新"计时
-            
-            // 尝试推断通道数（如果有 WaveformViewer 设置，或者根据数据长度）
-            // 这是一个估算，实际应该从配置读取
-            if (dataReceiver != null && currentChannelCount == 0)
-            {
-                // 尝试获取通道数据的逻辑（此处仅为示例，实际可能需要从配置获取）
-                 currentChannelCount = 8; // 默认OpenBCI通道数
-            }
+             currentChannelCount = 8; 
         }
-
-        // 2. 将数据传递给可视化组件 (波形图)
-        if (waveformViewer != null && isRunning && !isPaused)
-        {
-            // 注意：WaveformViewer 需要根据您的具体实现来调用更新方法
-            // 假设 WaveformViewer 有一个 UpdateData 或类似方法
-            // waveformViewer.UpdateData(data); 
-            
-            // 如果 WaveformViewer 是基于拉取(Pull)模式的（即在Update中自己去dataReceiver取数据），
-            // 那么这一步可能不需要。但通常是推(Push)模式效率更高。
-        }
-
-        // 3. 传递给其他组件 (如脑图、频谱)
-        // if (brainMapper != null) brainMapper.UpdateData(data);
     }
+
+    // 2. 将数据传递给可视化组件 (波形图)
+    if (waveformViewer != null && isRunning && !isPaused)
+    {
+        // 确保在此处调用了波形图更新（根据您的组件接口补充）
+        // waveformViewer.UpdateData(data); 
+    }
+
+    // 3. [已修改] 传递给大脑映射组件实现 3D 可视化
+    if (brainMapper != null && isRunning && !isPaused) 
+    {
+        brainMapper.UpdateData(data); 
+    }
+}
     
     void OnDestroy()
     {
